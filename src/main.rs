@@ -5,7 +5,6 @@ use std::{
     collections::{BTreeSet, HashMap},
     fs::File,
     io::{BufRead, BufReader, Read, Write},
-    iter::Sum,
     vec,
 };
 
@@ -16,7 +15,7 @@ struct Document {
     text: String,
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 struct TokenizedDocument {
     _id: u32,
     tokens: HashMap<String, u16>,
@@ -50,28 +49,11 @@ fn stem_words(words: Vec<&str>) -> Vec<String> {
         .collect();
 }
 
-// fn tokenize(str: &String, regex: Regex) -> Vec<&str> {
-//     let tokens = regex.find_iter(str.as_str()).map(|m| m.as_str()).collect();
-//     return tokens;
-// }
-
-// fn remove_extras(tokens: &mut Vec<String>) {
-//     let set: HashSet<_> = tokens.drain(..).collect();
-//     tokens.extend(set.into_iter());
-// }
-
-// fn combine_tokens(mut t1: Vec<String>, mut t2: Vec<String>) -> Vec<String> {
-//     let mut combined: Vec<String> = vec![];
-//     combined.append(&mut t1);
-//     combined.append(&mut t2);
-//     remove_extras(&mut combined);
-//     return combined;
-// }
-
 fn preprocess_text(str: String, stopwords: &Vec<String>) -> HashMap<String, u16> {
     let mut words = extract_words(&str);
     remove_stopwords(&mut words, stopwords);
-    let stemmed_words = stem_words(words);
+    let mut stemmed_words = stem_words(words);
+    stemmed_words.retain(|w| w.len() > 1); // remove words that ended up being 1 letter or less
     let mut frequency: HashMap<String, u16> = HashMap::new();
     for word in stemmed_words {
         *frequency.entry(word).or_insert(0) += 1;
@@ -104,19 +86,6 @@ fn build_inverted_index(documents: Vec<TokenizedDocument>) -> InvertedIndex {
     return inverted_index;
 }
 
-fn save_inverted_index(inverted_index: InvertedIndex, file_path: &str) {
-    let mut file = File::create(file_path).unwrap();
-    let json_data = serde_json::to_string(&inverted_index).unwrap();
-    file.write_all(json_data.as_bytes()).unwrap();
-}
-
-fn load_inverted_index(file_path: &str) -> InvertedIndex {
-    let mut file = File::open(file_path).unwrap();
-    let mut contents: String = String::from("");
-    file.read_to_string(&mut contents).unwrap();
-    return serde_json::from_str::<InvertedIndex>(&contents).unwrap();
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 struct Query {
     _id: String,
@@ -124,13 +93,13 @@ struct Query {
     metadata: HashMap<String, Vec<InnerMetadata>>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct InnerMetadata {
     sentences: Vec<u8>,
     label: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct TokenizedQuery {
     _id: String,
     tokens: HashMap<String, u16>,
@@ -144,7 +113,8 @@ fn process_queries(queries: Vec<Query>) -> Vec<TokenizedQuery> {
     for query in queries {
         let mut words = extract_words(&query.text);
         remove_stopwords(&mut words, &stopwords);
-        let stemmed_words = stem_words(words);
+        let mut stemmed_words = stem_words(words);
+        stemmed_words.retain(|w| w.len() > 1); // remove words that ended up being 2 letter or less
         let mut frequency: HashMap<String, u16> = HashMap::new();
         for word in stemmed_words {
             *frequency.entry(word).or_insert(0) += 1;
@@ -159,10 +129,18 @@ fn process_queries(queries: Vec<Query>) -> Vec<TokenizedQuery> {
     return tokenized;
 }
 
-fn save_queries(queries: Vec<TokenizedQuery>, file_path: &str) {
-    let mut file = File::create(file_path).unwrap();
-    let json_data = serde_json::to_string(&queries).unwrap();
-    file.write_all(json_data.as_bytes()).unwrap();
+fn save<T: Serialize>(container: T, file_path: &str) {
+    let mut file = File::create(file_path).expect("Failed to create file at specified path.");
+    let json_data = serde_json::to_string(&container).expect("Failed to serialize data.");
+    file.write_all(json_data.as_bytes())
+        .expect("Failed to write to file.");
+}
+
+fn load<T: for<'de> Deserialize<'de>>(file_path: &str) -> T {
+    let mut file = File::open(file_path).expect("Failed to open file at specified path.");
+    let mut buf: Vec<u8> = vec![];
+    file.read_to_end(&mut buf).expect("Failed to read file.");
+    return serde_json::from_slice::<T>(&buf).expect("Failed to deserialize data.");
 }
 
 fn initial_inverted_index_setup() {
@@ -170,16 +148,25 @@ fn initial_inverted_index_setup() {
     let mut documents: Vec<TokenizedDocument> = vec![];
     let file = File::open("scifact/corpus.jsonl").unwrap();
     let buffered_reader = BufReader::new(file);
+    let mut document_lengths = HashMap::new();
     for line in buffered_reader.lines() {
         let d: Document = serde_json::from_str(line.unwrap().as_str()).expect("msg");
         let text_tokens = preprocess_text(d.text, &stopwords);
+        document_lengths.insert(d._id.clone(), text_tokens.len().clone() as u32);
         documents.push(TokenizedDocument {
             _id: d._id.parse::<u32>().unwrap(),
             tokens: text_tokens,
         });
     }
+    let mut documents_map: HashMap<&u32, Vec<String>> = HashMap::new();
+    for TokenizedDocument { _id, tokens } in &documents {
+        documents_map.insert(_id, tokens.clone().into_keys().collect());
+    }
+    save(&documents_map, "saved/doc_tokens.json");
+    save(&document_lengths, "saved/doc_lengths.json");
+
     let inverted_index = build_inverted_index(documents);
-    save_inverted_index(inverted_index, "saved/inverted_index.json");
+    save(inverted_index, "saved/inverted_index.json");
 }
 
 fn initial_query_setup() {
@@ -191,40 +178,123 @@ fn initial_query_setup() {
         queries.push(q);
     }
     let tokenized = process_queries(queries);
-    save_queries(tokenized, "saved/query_tokens.json");
+    save(tokenized, "saved/query_tokens.json");
 }
 
-struct BM25 {
-    k1: u8,
-    b: u8,
+struct Ranking {
+    k1: f32,
+    b: f32,
     avgdl: u32,
-    num_docs: usize,
-    doc_len: HashMap<String, u32>,
+    num_doc: u32,
+    doc_lengths: HashMap<u32, u32>,
     inv_index: InvertedIndex,
 }
 
-impl BM25 {
-    fn init(doc_len: HashMap<String, u32>, inverted_index: InvertedIndex, k1: u8, b: u8) -> BM25 {
-        BM25 {
+impl Ranking {
+    fn init(doc_len: HashMap<u32, u32>, inverted_index: InvertedIndex, k1: f32, b: f32) -> Ranking {
+        let num_doc = doc_len.len() as u32;
+        let avgdl = doc_len.clone().into_values().sum::<u32>() / num_doc;
+
+        Ranking {
             k1,
             b,
-            avgdl: doc_len.values().sum::<u32>() / (doc_len.len() as u32),
-            num_docs: doc_len.len(),
-            doc_len,
+            avgdl,
+            num_doc,
+            doc_lengths: doc_len,
             inv_index: inverted_index,
         }
     }
-    fn idf(self: &BM25, term: String) {}
+    fn idf(self: &Ranking, term: String) -> f32 {
+        let df = self.inv_index.get(&term).unwrap().len();
+        return ((self.num_doc as f32 - df as f32 + 0.5) / (df as f32 + 0.5) + 1.0).ln();
+    }
 
-    fn bm25_score(self: &BM25) {}
+    // fn bm25_score(self: &Ranking, doc_id: u32, query_terms: TokenizedQuery) -> f32 {
+
+    //     let mut score = 0.0;
+    //     let doc_length = self.doc_lengths.get(&doc_id).unwrap();
+    //     for (term, _) in query_terms.tokens {
+    //         if let Some(tf) = self.inv_index.get(&term).unwrap().get(&doc_id) {
+    //             let idf_value = self.idf(term);
+    //             let term_score = idf_value * (*tf as f32 * (self.k1 + 1.0))
+    //                 / (*tf as f32
+    //                     + self.k1
+    //                         * (1.0 - self.b + self.b * *doc_length as f32 / self.avgdl as f32))
+    //                     as f32;
+    //             score += term_score;
+    //         }
+    //     }
+    //     return score;
+    // }
+
+    fn bm25_weight(self: &mut Ranking, doc_id: u32, term: &String) -> f32 {
+        //Calculate bm25 score for each term in document
+        let mut term_weight = 0.0;
+        let doc_length = self.doc_lengths.get(&doc_id).unwrap();
+        if let Some(tf) = self.inv_index.get(term).unwrap().get(&doc_id) {
+            // let idf_value = self.idf(term);
+            let df = self.inv_index.get(term).unwrap().len() as f32;
+            term_weight = (*tf as f32 * ((self.num_doc as f32 - df + 0.5) / df + 0.5).ln())
+                / self.k1
+                * ((1.0 - self.b) + self.b * *doc_length as f32 / self.avgdl as f32)
+                + *tf as f32;
+        }
+        return term_weight;
+    }
+
+    fn vector_length(self: &mut Ranking, tokens: Vec<String>) -> f32 {
+        let mut sum: f32 = 0.0;
+        for term in tokens {
+            let idf = self.idf(term);
+            sum += idf.powi(2);
+        }
+        return sum.sqrt();
+    }
+
+    fn cosine_similarity(self: &mut Ranking, doc_id: u32, query_terms: TokenizedQuery) -> f32 {
+        let mut sum = 0.0;
+        let q_terms: Vec<String> = query_terms.clone().tokens.into_keys().collect();
+        let (d_terms, _): (Vec<String>, Vec<HashMap<u32, u16>>) = self
+            .inv_index
+            .clone()
+            .into_iter()
+            .filter(|t| t.1.contains_key(&doc_id))
+            .unzip();
+        for (term, freq) in query_terms.tokens {
+            let doc_term_weight = self.bm25_weight(doc_id, &term);
+            let query_term_idf =
+                doc_term_weight * ((freq as f32) / self.inv_index.get(&term).unwrap().len() as f32);
+            sum += query_term_idf * doc_term_weight
+        }
+        let doc_len = self.vector_length(d_terms);
+        let q_len = self.vector_length(q_terms);
+
+        let result = sum / (doc_len * q_len);
+        return result;
+    }
 }
 
 fn main() {
-    // Created the inverted index and saved to file
-    // initial_inverted_index_setup();\
+    // Created the inverted index & doc_length and saved to file
+    // initial_inverted_index_setup();
 
     // Tokenized the queries and saved to file
     // initial_query_setup();
 
-    let inverted_index = load_inverted_index("saved/inverted_index.json");
+    let inverted_index: InvertedIndex = load("saved/inverted_index.json");
+    let queries: Vec<TokenizedQuery> = load("saved/query_tokens.json");
+    let doc_lengths: HashMap<u32, u32> = load("saved/doc_lengths.json");
+    // let _doc_tokens: HashMap<u32, Vec<String>> = load("saved/doc_tokens.json");
+    let mut rank = Ranking::init(doc_lengths.clone(), inverted_index, 1.75, 0.75);
+
+    let mut results: Vec<(String, u32, f32)> = vec![];
+    for doc_id in doc_lengths {
+        let r = rank.cosine_similarity(doc_id.0, queries[1].clone());
+        if r > 0.01 {
+            results.push((queries[1]._id.clone(), doc_id.0, r));
+        }
+    }
+    results.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
+    results.reverse();
+    println!("{:?}", results);
 }
