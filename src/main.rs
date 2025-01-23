@@ -204,8 +204,8 @@ impl Ranking {
             inv_index: inverted_index,
         }
     }
-    fn idf(self: &Ranking, term: String) -> f32 {
-        let df = self.inv_index.get(&term).unwrap().len();
+    fn idf(self: &Ranking, term: &String) -> f32 {
+        let df = self.inv_index.get(term).unwrap().len();
         return ((self.num_doc as f32 - df as f32 + 0.5) / (df as f32 + 0.5) + 1.0).ln();
     }
 
@@ -242,7 +242,7 @@ impl Ranking {
         return term_weight;
     }
 
-    fn vector_length(self: &mut Ranking, tokens: Vec<String>) -> f32 {
+    fn vector_length(self: &Ranking, tokens: Vec<&String>) -> f32 {
         let mut sum: f32 = 0.0;
         for term in tokens {
             let idf = self.idf(term);
@@ -253,19 +253,23 @@ impl Ranking {
 
     fn cosine_similarity(self: &mut Ranking, doc_id: u32, query_terms: TokenizedQuery) -> f32 {
         let mut sum = 0.0;
-        let q_terms: Vec<String> = query_terms.clone().tokens.into_keys().collect();
-        let (d_terms, _): (Vec<String>, Vec<HashMap<u32, u16>>) = self
-            .inv_index
-            .clone()
-            .into_iter()
-            .filter(|t| t.1.contains_key(&doc_id))
-            .unzip();
-        for (term, freq) in query_terms.tokens {
+
+        for (term, freq) in &query_terms.tokens {
             let doc_term_weight = self.bm25_weight(doc_id, &term);
             let query_term_idf =
-                doc_term_weight * ((freq as f32) / self.inv_index.get(&term).unwrap().len() as f32);
+                doc_term_weight * ((*freq as f32) / self.inv_index.get(term).unwrap().len() as f32);
             sum += query_term_idf * doc_term_weight
         }
+
+        let q_terms: Vec<&String> = query_terms.tokens.keys().collect();
+        let mut d_terms = vec![];
+        //extract the documents terms from the inverted index
+        for (key, value) in self.inv_index.iter() {
+            if value.contains_key(&doc_id) {
+                d_terms.push(key);
+            }
+        }
+
         let doc_len = self.vector_length(d_terms);
         let q_len = self.vector_length(q_terms);
 
