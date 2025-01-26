@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::fmt::Display;
 use std::{
     collections::{BTreeSet, HashMap},
     fs::File,
@@ -181,30 +182,35 @@ fn initial_query_setup() {
     save(tokenized, "saved/query_tokens.json");
 }
 
-struct Ranking {
+struct Ranking<'a> {
     k1: f32,
     b: f32,
     avgdl: u32,
     num_doc: u32,
-    doc_lengths: HashMap<u32, u32>,
-    inv_index: InvertedIndex,
+    inv_index: &'a InvertedIndex,
+    doc_lengths: &'a HashMap<u32, u32>,
 }
 
-impl Ranking {
-    fn init(doc_len: HashMap<u32, u32>, inverted_index: InvertedIndex, k1: f32, b: f32) -> Ranking {
-        let num_doc = doc_len.len() as u32;
-        let avgdl = doc_len.clone().into_values().sum::<u32>() / num_doc;
+impl<'a> Ranking<'a> {
+    fn init(
+        doc_lengths: &'a HashMap<u32, u32>,
+        inverted_index: &'a InvertedIndex,
+        k1: f32,
+        b: f32,
+    ) -> Ranking<'a> {
+        let num_doc = doc_lengths.len() as u32;
+        let avgdl = doc_lengths.clone().into_values().sum::<u32>() / num_doc;
 
         Ranking {
             k1,
             b,
             avgdl,
             num_doc,
-            doc_lengths: doc_len,
             inv_index: inverted_index,
+            doc_lengths,
         }
     }
-    fn idf(self: &Ranking, term: &String) -> f32 {
+    fn idf(&self, term: &String) -> f32 {
         let df = self.inv_index.get(term).unwrap().len();
         return ((self.num_doc as f32 - df as f32 + 0.5) / (df as f32 + 0.5) + 1.0).ln();
     }
@@ -227,11 +233,11 @@ impl Ranking {
     //     return score;
     // }
 
-    fn bm25_weight(self: &mut Ranking, doc_id: u32, term: &String) -> f32 {
+    fn bm25_weight(&self, doc_id: &u32, term: &String) -> f32 {
         //Calculate bm25 score for each term in document
         let mut term_weight = 0.0;
-        let doc_length = self.doc_lengths.get(&doc_id).unwrap();
-        if let Some(tf) = self.inv_index.get(term).unwrap().get(&doc_id) {
+        let doc_length = self.doc_lengths.get(doc_id).unwrap();
+        if let Some(tf) = self.inv_index.get(term).unwrap().get(doc_id) {
             // let idf_value = self.idf(term);
             let df = self.inv_index.get(term).unwrap().len() as f32;
             term_weight = (*tf as f32 * ((self.num_doc as f32 - df + 0.5) / df + 0.5).ln())
@@ -242,7 +248,7 @@ impl Ranking {
         return term_weight;
     }
 
-    fn vector_length(self: &Ranking, tokens: Vec<&String>) -> f32 {
+    fn vector_length(&self, tokens: Vec<&String>) -> f32 {
         let mut sum: f32 = 0.0;
         for term in tokens {
             let idf = self.idf(term);
@@ -251,7 +257,7 @@ impl Ranking {
         return sum.sqrt();
     }
 
-    fn cosine_similarity(self: &mut Ranking, doc_id: u32, query_terms: TokenizedQuery) -> f32 {
+    fn cosine_similarity(&self, doc_id: &u32, query_terms: TokenizedQuery) -> f32 {
         let mut sum = 0.0;
 
         for (term, freq) in &query_terms.tokens {
@@ -289,13 +295,13 @@ fn main() {
     let queries: Vec<TokenizedQuery> = load("saved/query_tokens.json");
     let doc_lengths: HashMap<u32, u32> = load("saved/doc_lengths.json");
     // let _doc_tokens: HashMap<u32, Vec<String>> = load("saved/doc_tokens.json");
-    let mut rank = Ranking::init(doc_lengths.clone(), inverted_index, 1.75, 0.75);
+    let rank = Ranking::init(&doc_lengths, &inverted_index, 1.75, 0.75);
 
     let mut results: Vec<(String, u32, f32)> = vec![];
-    for doc_id in doc_lengths {
+    for doc_id in doc_lengths.iter() {
         let r = rank.cosine_similarity(doc_id.0, queries[1].clone());
         if r > 0.01 {
-            results.push((queries[1]._id.clone(), doc_id.0, r));
+            results.push((queries[1]._id.clone(), *doc_id.0, r));
         }
     }
     results.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
