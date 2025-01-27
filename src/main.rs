@@ -151,7 +151,9 @@ fn initial_inverted_index_setup() {
     let mut document_lengths = HashMap::new();
     for line in buffered_reader.lines() {
         let d: Document = serde_json::from_str(line.unwrap().as_str()).expect("msg");
-        let text_tokens = preprocess_text(d.text, &stopwords);
+        let mut text_tokens = preprocess_text(d.text, &stopwords);
+        let title_tokens = preprocess_text(d.title, &stopwords);
+        text_tokens.extend(title_tokens); // combine title token with text tokens
         document_lengths.insert(d._id.clone(), text_tokens.len().clone() as u32);
         documents.push(TokenizedDocument {
             _id: d._id.parse::<u32>().unwrap(),
@@ -278,6 +280,52 @@ impl Ranking {
     }
 }
 
+// query_id Q0 doc_id rank score tag
+#[derive(Debug)]
+struct RankingResult {
+    query_id: u32,
+    doc_id: u32,
+    score: f32,
+    tag: u8,
+}
+
+impl PartialOrd for RankingResult {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.score.partial_cmp(&other.score)
+    }
+}
+
+impl PartialEq for RankingResult {
+    fn eq(&self, other: &Self) -> bool {
+        self.score.eq(&other.score)
+    }
+}
+
+impl Ord for RankingResult {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match self.score.partial_cmp(&other.score) {
+            Some(t) => t,
+            None => std::cmp::Ordering::Less,
+        }
+    }
+
+    fn max(self, other: Self) -> Self
+    where
+        Self: Sized,
+    {
+        std::cmp::max_by(self, other, Ord::cmp)
+    }
+
+    fn min(self, other: Self) -> Self
+    where
+        Self: Sized,
+    {
+        std::cmp::min_by(self, other, Ord::cmp)
+    }
+}
+
+impl Eq for RankingResult {}
+
 fn main() {
     // Created the inverted index & doc_length and saved to file
     // initial_inverted_index_setup();
@@ -291,14 +339,20 @@ fn main() {
     // let _doc_tokens: HashMap<u32, Vec<String>> = load("saved/doc_tokens.json");
     let mut rank = Ranking::init(doc_lengths.clone(), inverted_index, 1.75, 0.75);
 
-    let mut results: Vec<(String, u32, f32)> = vec![];
+    //Using BTree to auto sort on insert.
+
+    let mut results: BTreeSet<RankingResult> = BTreeSet::new();
     for doc_id in doc_lengths {
         let r = rank.cosine_similarity(doc_id.0, queries[1].clone());
         if r > 0.01 {
-            results.push((queries[1]._id.clone(), doc_id.0, r));
+            results.insert(RankingResult {
+                query_id: queries[1]._id.clone().parse::<u32>().unwrap(),
+                doc_id: doc_id.0,
+                score: r,
+                tag: 1,
+            });
         }
     }
-    results.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap());
-    results.reverse();
+    println!("{:?}", results.first());
     println!("{:?}", results);
 }
