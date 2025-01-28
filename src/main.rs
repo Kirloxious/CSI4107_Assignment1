@@ -1,7 +1,8 @@
 #![allow(dead_code)]
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::fmt::Display;
+use std::collections::BTreeMap;
+use std::time::Instant;
 use std::{
     collections::{BTreeSet, HashMap},
     fs::File,
@@ -212,77 +213,113 @@ impl<'a> Ranking<'a> {
             doc_lengths,
         }
     }
-    fn idf(&self, term: &String) -> f32 {
-        let df = self.inv_index.get(term).unwrap().len();
+    fn idf(&self, term: &str) -> f32 {
+        // if inv_index doesnt contain term, idf is 0
+        let df = self.inv_index.get(term).map_or(0, |map| map.len());
+        if df == 0 {
+            return 0.0;
+        }
+
         return ((self.num_doc as f32 - df as f32 + 0.5) / (df as f32 + 0.5) + 1.0).ln();
     }
 
-    // fn bm25_score(self: &Ranking, doc_id: u32, query_terms: TokenizedQuery) -> f32 {
-
-    //     let mut score = 0.0;
-    //     let doc_length = self.doc_lengths.get(&doc_id).unwrap();
-    //     for (term, _) in query_terms.tokens {
-    //         if let Some(tf) = self.inv_index.get(&term).unwrap().get(&doc_id) {
-    //             let idf_value = self.idf(term);
-    //             let term_score = idf_value * (*tf as f32 * (self.k1 + 1.0))
-    //                 / (*tf as f32
-    //                     + self.k1
-    //                         * (1.0 - self.b + self.b * *doc_length as f32 / self.avgdl as f32))
-    //                     as f32;
-    //             score += term_score;
-    //         }
-    //     }
-    //     return score;
-    // }
-
-    fn bm25_weight(&self, doc_id: &u32, term: &String) -> f32 {
-        //Calculate bm25 score for each term in document
-        let mut term_weight = 0.0;
-        let doc_length = self.doc_lengths.get(doc_id).unwrap();
-        if let Some(tf) = self.inv_index.get(term).unwrap().get(doc_id) {
-            // let idf_value = self.idf(term);
-            let df = self.inv_index.get(term).unwrap().len() as f32;
-            term_weight = (*tf as f32 * ((self.num_doc as f32 - df + 0.5) / df + 0.5).ln())
-                / self.k1
-                * ((1.0 - self.b) + self.b * *doc_length as f32 / self.avgdl as f32)
-                + *tf as f32;
+    fn bm25_weight(&self, doc_id: &u32, term: &str) -> f32 {
+        let doc_length = *self.doc_lengths.get(doc_id).unwrap_or(&0);
+        if let Some(term_map) = self.inv_index.get(term) {
+            if let Some(&tf) = term_map.get(doc_id) {
+                let idf = self.idf(term);
+                return idf * tf as f32
+                    / (self.k1
+                        * ((1.0 - self.b) + self.b * (doc_length as f32 / self.avgdl as f32))
+                        + tf as f32);
+            }
         }
-        return term_weight;
+        0.0
     }
 
-    fn vector_length(&self, tokens: Vec<&String>) -> f32 {
-        let mut sum: f32 = 0.0;
-        for term in tokens {
-            let idf = self.idf(term);
-            sum += idf.powi(2);
-        }
-        return sum.sqrt();
+    fn vector_length(&self, weights: &[f32]) -> f32 {
+        weights
+            .iter()
+            .map(|weight| weight.powi(2))
+            .sum::<f32>()
+            .sqrt()
     }
 
-    fn cosine_similarity(&self, doc_id: &u32, query_terms: TokenizedQuery) -> f32 {
+    fn cosine_similarity(&self, doc_id: &u32, query_terms: &TokenizedQuery) -> f32 {
         let mut sum = 0.0;
+        let mut doc_weights = vec![];
+        let mut q_weights = vec![];
 
         for (term, freq) in &query_terms.tokens {
-            let doc_term_weight = self.bm25_weight(doc_id, &term);
-            let query_term_idf =
-                doc_term_weight * ((*freq as f32) / self.inv_index.get(term).unwrap().len() as f32);
-            sum += query_term_idf * doc_term_weight
+            let doc_term_weight = self.bm25_weight(doc_id, term);
+            let query_term_weight = self.idf(term) * (*freq as f32);
+
+            sum += query_term_weight * doc_term_weight;
+
+            q_weights.push(query_term_weight);
+            doc_weights.push(doc_term_weight);
         }
 
-        let q_terms: Vec<&String> = query_terms.tokens.keys().collect();
-        let mut d_terms = vec![];
-        //extract the documents terms from the inverted index
-        for (key, value) in self.inv_index.iter() {
-            if value.contains_key(&doc_id) {
-                d_terms.push(key);
+        let doc_len = self.vector_length(&doc_weights);
+        let q_len = self.vector_length(&q_weights);
+
+        if doc_len > 0.0 && q_len > 0.0 {
+            sum / (doc_len * q_len)
+        } else {
+            0.0
+        }
+    }
+
+    fn rank_documents(&self, queries: &[TokenizedQuery]) -> BTreeMap<u32, BTreeSet<RankingResult>> {
+        let mut results: BTreeMap<u32, BTreeSet<RankingResult>> = BTreeMap::new();
+        const MAX_TREE_SIZE: usize = 100;
+
+        for query in queries.iter() {
+            for term in query.tokens.keys() {
+                if let Some(doc_map) = self.inv_index.get(term) {
+                    for (doc_id, _) in doc_map.iter() {
+                        let q_id = query._id.parse::<u32>().unwrap();
+                        let tag = (doc_id + q_id) % 2_u32.pow(23);
+
+                        let score = self.cosine_similarity(doc_id, query);
+                        let q_entry = results.entry(q_id).or_insert(BTreeSet::new());
+                        q_entry.insert(RankingResult {
+                            query_id: q_id,
+                            doc_id: *doc_id,
+                            score,
+                            tag,
+                        });
+
+                        // Remove the smallest result if the new score is bigger and more than 100 values in tree.
+                        if q_entry.len() > MAX_TREE_SIZE {
+                            q_entry.pop_first();
+                        }
+                    }
+                }
             }
         }
 
-        let doc_len = self.vector_length(d_terms);
-        let q_len = self.vector_length(q_terms);
+        return results;
+    }
+}
 
-        let result = sum / (doc_len * q_len);
-        return result;
+fn save_results_to_file(results: BTreeMap<u32, BTreeSet<RankingResult>>, file_path: &str) {
+    let mut file = File::create(file_path).expect("Failed to create file.");
+    for result in results.iter() {
+        let mut rank = 0;
+        for query_ranking in result.1.iter().rev() {
+            rank += 1;
+            file.write_fmt(format_args!(
+                "{}  {}  {}  {}  {}  {}\n",
+                query_ranking.query_id,
+                "Q0",
+                query_ranking.doc_id,
+                rank,
+                query_ranking.score,
+                query_ranking.tag
+            ))
+            .expect("Failed to write to file.");
+        }
     }
 }
 
@@ -292,7 +329,7 @@ struct RankingResult {
     query_id: u32,
     doc_id: u32,
     score: f32,
-    tag: u8,
+    tag: u32,
 }
 
 impl PartialOrd for RankingResult {
@@ -342,23 +379,12 @@ fn main() {
     let inverted_index: InvertedIndex = load("saved/inverted_index.json");
     let queries: Vec<TokenizedQuery> = load("saved/query_tokens.json");
     let doc_lengths: HashMap<u32, u32> = load("saved/doc_lengths.json");
-    // let _doc_tokens: HashMap<u32, Vec<String>> = load("saved/doc_tokens.json");
     let rank = Ranking::init(&doc_lengths, &inverted_index, 1.75, 0.75);
 
-    //Using BTree to auto sort on insert.
+    let start = Instant::now();
+    let results = rank.rank_documents(&queries);
+    let duration = start.elapsed();
+    println!("{:?}", duration);
 
-    let mut results: BTreeSet<RankingResult> = BTreeSet::new();
-    for doc_id in doc_lengths.iter() {
-        let r = rank.cosine_similarity(&doc_id.0, queries[1].clone());
-        if r > 0.01 {
-            results.insert(RankingResult {
-                query_id: queries[1]._id.clone().parse::<u32>().unwrap(),
-                doc_id: *doc_id.0,
-                score: r,
-                tag: 1,
-            });
-        }
-    }
-    println!("{:?}", results.first());
-    println!("{:?}", results.iter().rev());
+    save_results_to_file(results, "saved/results.txt");
 }
