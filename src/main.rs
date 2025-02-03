@@ -1,7 +1,7 @@
-#![allow(dead_code)]
+use lazy_static::lazy_static;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 use std::{
     collections::{BTreeSet, HashMap},
@@ -9,6 +9,10 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     vec,
 };
+
+lazy_static! {
+    static ref WORD_REGEX: Regex = Regex::new(r"\w+(?:'\w+)?|[^\w\s]").unwrap();
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct Document {
@@ -27,8 +31,7 @@ struct TokenizedDocument {
 type InvertedIndex = HashMap<String, HashMap<u32, u16>>;
 
 fn extract_words(str: &String) -> Vec<&str> {
-    let regex = Regex::new(r"\w+(?:'\w+)?|[^\w\s]").unwrap();
-    return regex
+    return WORD_REGEX
         .find_iter(str.as_str())
         .map(|m| m.as_str())
         .filter(|w| w.chars().all(|c| !c.is_digit(10))) //remove numbers
@@ -36,9 +39,8 @@ fn extract_words(str: &String) -> Vec<&str> {
         .collect();
 }
 
-fn remove_stopwords(words: &mut Vec<&str>, stopwords: &Vec<String>) {
-    let remove = BTreeSet::from_iter(stopwords.to_owned());
-    words.retain(|e| !remove.contains(e.to_owned()));
+fn remove_stopwords(words: &mut Vec<&str>, stopwords: &HashSet<String>) {
+    words.retain(|e| !stopwords.contains(*e));
 }
 
 fn stem_words(words: Vec<&str>) -> Vec<String> {
@@ -51,26 +53,24 @@ fn stem_words(words: Vec<&str>) -> Vec<String> {
         .collect();
 }
 
-fn preprocess_text(str: String, stopwords: &Vec<String>) -> HashMap<String, u16> {
+fn preprocess_text(str: String, stopwords: &HashSet<String>) -> HashMap<String, u16> {
     let mut words = extract_words(&str);
     remove_stopwords(&mut words, stopwords);
     let mut stemmed_words = stem_words(words);
     stemmed_words.retain(|w| w.len() > 1); // remove words that ended up being 1 letter or less
     let mut frequency: HashMap<String, u16> = HashMap::new();
-    for word in stemmed_words {
-        *frequency.entry(word).or_insert(0) += 1;
-    }
+    stemmed_words
+        .into_iter()
+        .for_each(|word| *frequency.entry(word).or_insert(0) += 1);
     return frequency;
 }
 
-fn load_stopwords() -> Vec<String> {
-    let mut stopwords = vec![];
+fn load_stopwords() -> HashSet<String> {
     let file = File::open("scifact/stopwords.txt").unwrap();
-    let buffered_reader = BufReader::new(file);
-    for line in buffered_reader.lines() {
-        stopwords.push(line.unwrap());
-    }
-    return stopwords;
+    BufReader::new(file)
+        .lines()
+        .map(|line| line.unwrap())
+        .collect()
 }
 
 fn build_inverted_index(documents: Vec<TokenizedDocument>) -> InvertedIndex {
@@ -138,11 +138,12 @@ fn save<T: Serialize>(container: T, file_path: &str) {
         .expect("Failed to write to file.");
 }
 
-fn load<T: for<'de> Deserialize<'de>>(file_path: &str) -> T {
-    let mut file = File::open(file_path).expect("Failed to open file at specified path.");
+fn load<T: for<'de> Deserialize<'de>>(file_path: &str) -> Result<T, Box<dyn std::error::Error>> {
+    let mut file = File::open(file_path)?;
     let mut buf: Vec<u8> = vec![];
-    file.read_to_end(&mut buf).expect("Failed to read file.");
-    return serde_json::from_slice::<T>(&buf).expect("Failed to deserialize data.");
+    file.read_to_end(&mut buf)?;
+    let data = serde_json::from_slice::<T>(&buf)?;
+    Ok(data)
 }
 
 fn initial_inverted_index_setup() {
@@ -219,7 +220,6 @@ impl<'a> Ranking<'a> {
         if df == 0 {
             return 0.0;
         }
-
         return ((self.num_doc as f32 - df as f32 + 0.5) / (df as f32 + 0.5) + 1.0).ln();
     }
 
@@ -370,15 +370,19 @@ impl Ord for RankingResult {
 impl Eq for RankingResult {}
 
 fn main() {
+    // To run the setup code, compile with cargo run --features setup
+
     // Created the inverted index & doc_length and saved to file
-    // initial_inverted_index_setup();
+    #[cfg(feature = "setup")]
+    initial_inverted_index_setup();
 
     // Tokenized the queries and saved to file
-    // initial_query_setup();
+    #[cfg(feature = "setup")]
+    initial_query_setup();
 
-    let inverted_index: InvertedIndex = load("saved/inverted_index.json");
-    let queries: Vec<TokenizedQuery> = load("saved/query_tokens.json");
-    let doc_lengths: HashMap<u32, u32> = load("saved/doc_lengths.json");
+    let inverted_index: InvertedIndex = load("saved/inverted_index.json").expect("Failed to load");
+    let queries: Vec<TokenizedQuery> = load("saved/query_tokens.json").expect("Failed to load");
+    let doc_lengths: HashMap<u32, u32> = load("saved/doc_lengths.json").expect("Failed to load");
     let rank = Ranking::init(&doc_lengths, &inverted_index, 1.75, 0.75);
 
     let start = Instant::now();
@@ -386,5 +390,5 @@ fn main() {
     let duration = start.elapsed();
     println!("{:?}", duration);
 
-    save_results_to_file(results, "saved/results.txt");
+    save_results_to_file(results, "saved/results.tsv");
 }
