@@ -154,13 +154,13 @@ fn initial_inverted_index_setup() {
     let mut document_lengths = HashMap::new();
     for line in buffered_reader.lines() {
         let d: Document = serde_json::from_str(line.unwrap().as_str()).expect("msg");
-        let mut text_tokens = preprocess_text(d.text, &stopwords);
+        // let mut text_tokens = preprocess_text(d.text, &stopwords);
         let title_tokens = preprocess_text(d.title, &stopwords);
-        text_tokens.extend(title_tokens); // combine title token with text tokens
-        document_lengths.insert(d._id.clone(), text_tokens.len().clone() as u32);
+        // text_tokens.extend(title_tokens); // combine title token with text tokens
+        document_lengths.insert(d._id.clone(), title_tokens.len().clone() as u32);
         documents.push(TokenizedDocument {
             _id: d._id.parse::<u32>().unwrap(),
-            tokens: text_tokens,
+            tokens: title_tokens,
         });
     }
     let mut documents_map: HashMap<&u32, Vec<String>> = HashMap::new();
@@ -369,6 +369,20 @@ impl Ord for RankingResult {
 
 impl Eq for RankingResult {}
 
+fn save_vocab(inverted_index: &InvertedIndex) {
+    let mut f = File::create("saved/vocab_sample.txt").unwrap();
+    inverted_index
+        .keys()
+        .collect::<Vec<&String>>()
+        .iter()
+        .enumerate()
+        .for_each(|(n, w)| {
+            if n < 100 {
+                f.write_fmt(format_args!("{w}\n")).unwrap();
+            }
+        });
+}
+
 fn main() {
     // To run the setup code, compile with cargo run --features setup
 
@@ -389,6 +403,8 @@ fn main() {
     let results = rank.rank_documents(&queries);
     let duration = start.elapsed();
     println!("{:?}", duration);
+
+    println!("Vocab lengths: {:?}", inverted_index.keys().len());
 
     save_results_to_file(results, "saved/results.tsv");
 }
