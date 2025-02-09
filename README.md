@@ -34,9 +34,9 @@ Once the necessary files are loaded, the ranking system can begin running the BM
 # Explanation of Algorithms, Data Structures, and Optimizations
 
 ### Preprocessing Stage
-The queries and docements are defined as struct in the preprocessing module so it is easier to manipulate them.  
+The queries and documents are defined as struct in the preprocessing module so it is easier to manipulate them.  
 The preprocessing algorithm works as such:
-1. Extract the words from the text using a Regex and outpus a list of strings.
+1. Extract the words from the text using a Regex and outputs a list of strings.
 2. Remove the stopwords from the list.
 3. Stem the words using the Porter Stemmer. 
 4. Removes any outlier which only have 1 letter
@@ -50,7 +50,7 @@ The inverted index is represent as a map of string as keys and another map of in
 This allows us to store for a given token, each document with the frequency of that token for more accurate scores.
 The indexing algorithm works as such: 
 1. After loading the corpus and stopwords, iterate through the corpus line by line and use the preprocessing algorithm on the text and title.
-2. Combine the tokens from the text and title and pack them in a struct called `TokenizedDocument` whichs holds the document id and the tokens for that document and store in a list for now.
+2. Combine the tokens from the text and title and pack them in a struct called `TokenizedDocument` whichs holds the document ID and the tokens for that document and store in a list for now.
 3. After all documents have been processed, pass the list to the function `build_inverted_index` which iterates through the list and builds the map storing the tokens as keys and the inserting documents that contain the token with the frequency. 
 
 The queries are also stored in a file as a map of query id as keys and their tokens as values.
@@ -60,14 +60,14 @@ The queries are also stored in a file as a map of query id as keys and their tok
 The ranking struct holds values for the BM25 formula; k1, b, avgdl & number of documents. It also stores a reference to the inverted index and a map of document lengths. This struct contains functions including calculating the idc, bm25 weight, vector length, cosine similarity and the ranking algorithm. The optimal BM25 parameters we found were k1=1.2 and b=0.75.
 The ranking algorithm works as such:
 1. Iterate through the queries, then iterate through each term in that query
-2. if the term is in the inverted index, fetch the documents map
-3. iterate through the documents map and calculate the cosine similarity between the document and the query
-4. store the result in a BTreeSet and insert into a BTreeMap to link query id to the set. We use a BTree here to keep it sorted on insert and remove the first element once we exceed 100 since first element is alwasy the smallest.
-5. return the BtreeMap
+2. If the term is in the inverted index, fetch the documents map
+3. Iterate through the documents map and calculate the cosine similarity between the document and the query
+4. Store the result in a BTreeSet and insert into a BTreeMap to link query ID to the set. We use a BTree here to keep it sorted on insert and remove the first element once we exceed 100 since first element is always the smallest.
+5. Return the BtreeMap
 
 ### Query Test Results
 
-Here are the results of the top 10 answers of the first 2 queries id 0 & 1.
+Here are the results of the top 10 answers of the first 2 queries ID 0 & 1.
 
 0  Q0  13231899  1  0.77504003  4843291     
 0  Q0  3770726  2  0.5003812  3770726   
