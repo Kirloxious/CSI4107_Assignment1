@@ -1,14 +1,17 @@
 
 # Name & Tasks
 
-Name: Alexandre Ringuette
-Student Number: 300251252
+Name: Alexandre Ringuette   
+Student Number: 300251252      
+Tasks: Ranking and Retrieval System, MAP Score, Report
 
-Name: 
-Student Number: 
+Name: Alexis Laplante   
+Student Number: 300220658   
+Tasks: Indexing System, Report
 
-Name: 
-Student Number: 
+Name: Louka Papineau    
+Student Number: 300236645   
+Tasks: Preprocessing system, Report  
 
 # Functionality
 
@@ -54,7 +57,7 @@ The queries are also stored in a file as a map of query id as keys and their tok
 
 
 ### Ranking Stage
-The ranking struct holds values for the BM25 formula; k1, b, avgdl & number of documents. It also stores a reference to the inverted index and a map of document lengths. This struct contains functions including calculating the idc, bm25 weight, vector length, cosine similarity and the ranking algorithm. 
+The ranking struct holds values for the BM25 formula; k1, b, avgdl & number of documents. It also stores a reference to the inverted index and a map of document lengths. This struct contains functions including calculating the idc, bm25 weight, vector length, cosine similarity and the ranking algorithm. The optimal BM25 parameters we found were k1=1.2 and b=0.75.
 The ranking algorithm works as such:
 1. Iterate through the queries, then iterate through each term in that query
 2. if the term is in the inverted index, fetch the documents map
@@ -66,41 +69,40 @@ The ranking algorithm works as such:
 
 Here are the results of the top 10 answers of the first 2 queries id 0 & 1.
 
-0  Q0  13231899  1  0.7750401  4843291
-0  Q0  43385013  2  0.5003812  1441973
-0  Q0  27049238  3  0.5003811  1883414
-0  Q0  6550579  4  0.48893997  6550579
-0  Q0  13903052  5  0.479567  5514444
-0  Q0  26083387  6  0.47956696  917563
-0  Q0  26071782  7  0.47616866  905958
-0  Q0  34386619  8  0.46710527  832187
-0  Q0  1203035  9  0.41149545  1203035
-0  Q0  20155713  10  0.41149542  3378497
-0  Q0  6327940  11  0.4114954  6327940
+0  Q0  13231899  1  0.77504003  4843291     
+0  Q0  3770726  2  0.5003812  3770726   
+0  Q0  43385013  3  0.5003811  1441973  
+0  Q0  6550579  4  0.49099234  6550579  
+0  Q0  6636088  5  0.47956696  6636088  
+0  Q0  2682251  6  0.47956693  2682251  
+0  Q0  26071782  7  0.47891963  905958    
+0  Q0  34386619  8  0.47634268  832187  
+0  Q0  1203035  9  0.41149545  1203035  
+0  Q0  16532419  10  0.41149542  8143811    
+0  Q0  21257564  11  0.41082072  4480348    
 
-1  Q0  13231899  1  0.8019935  4843292
-1  Q0  27049238  2  0.5177828  1883415
-1  Q0  40212412  3  0.51778275  6657981
-1  Q0  6550579  4  0.5059437  6550580
-1  Q0  34386619  5  0.48334968  832188
-1  Q0  18953920  6  0.42580593  2176705
-1  Q0  20155713  7  0.4258059  3378498
-1  Q0  21257564  8  0.4246468  4480349
-1  Q0  18276599  9  0.41892213  1499384
-1  Q0  41928290  10  0.4189221  8373859
-1  Q0  14275671  11  0.41892207  5887064
+1  Q0  13231899  1  0.8019934  4843292  
+1  Q0  40212412  2  0.5177828  6657981  
+1  Q0  3770726  3  0.51778275  3770727  
+1  Q0  6550579  4  0.5080674  6550580   
+1  Q0  34386619  5  0.49290836  832188  
+1  Q0  1203035  6  0.42580596  1203036  
+1  Q0  1944452  7  0.42580593  1944453  
+1  Q0  18953920  8  0.42580587  2176705     
+1  Q0  21257564  9  0.42510775  4480349     
+1  Q0  26071782  10  0.42029762  905959     
+1  Q0  36480032  11  0.42026997  2925601    
 
+We can see from these query results that the highest score is relativly higher then the second highest indicating that document is probably what the query was looking for. 
 
-
-
-The vocabulary consistes of 20028 tokens. See vocab_sample.txt for a sample of 100 tokens.
+The vocabulary consistes of 20028 tokens. See [this file](saved/vocab_sample.txt) for a sample of 100 tokens.
 
 # Mean Average Precision
 Running the follow command to calculate the Mean Average Precision (MAP) using the trec_eval script: </br>
 `./trec_eval -m map ../../Assignment1/scifact/qrels/test.tsv ../../Assignment1/saved/results.tsv`
 
 Outputs: 
-`map                     all     0.5162`
+`map                     all     0.5188`
 </br>
 The MAP is 0.5162 compared to the test.tsv file.
 

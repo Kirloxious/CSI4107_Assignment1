@@ -31,7 +31,7 @@ fn main() {
     let inverted_index: InvertedIndex = load("saved/inverted_index.json").expect("Failed to load");
     let queries: Vec<TokenizedQuery> = load("saved/query_tokens.json").expect("Failed to load");
     let doc_lengths: HashMap<u32, u32> = load("saved/doc_lengths.json").expect("Failed to load");
-    let rank = Ranking::init(&doc_lengths, &inverted_index, 1.75, 0.75);
+    let rank = Ranking::init(&doc_lengths, &inverted_index, 1.2, 0.75);
 
     let start = Instant::now();
     let results = rank.rank_documents(&queries);
